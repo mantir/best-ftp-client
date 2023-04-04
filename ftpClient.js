@@ -62,6 +62,7 @@ export default class BestFTPClient {
           }
         });
       });
+      this.end = () => client.end();
       await client.connect(ftpOptions);
     } else if (protocol === 'sftp') {
       var client = new SFTPClient();
@@ -85,6 +86,7 @@ export default class BestFTPClient {
           }
         }
       };
+      this.end = () => client.end();
       await client.connect(ftpOptions);
     } else {
       throw new Error('Unsupported protocol');
@@ -118,7 +120,7 @@ export default class BestFTPClient {
       if (Array.isArray(sourceFolderOrFiles)) {
         var files = sourceFolderOrFiles.map(name => name.name ? name : ({ name }));
       } else {
-        var files = await this.ls(sourceFolderOrFiles);
+        var files = await this.list(sourceFolderOrFiles);
       }
 
       for (const file of files) {
@@ -129,17 +131,38 @@ export default class BestFTPClient {
         if (fs.existsSync(localFile)) {
           console.log(`${localFile} already exists, overwrite ...`);
         }
-
-        var stream = await this.get(`${file.name}`)
-        stream.pipe(fs.createWriteStream(localFile));
-        console.log(`Downloaded ${file.name} to ${localFile}`);
-        paths.push(localFile);
+        var error = await this.downloadFile(file.name, localFile).catch((err) => { throw err })
+        if (!error) {
+          console.log(`Downloaded ${file.name} to ${localFile}`);
+          paths.push(localFile);
+        }
       }
     } catch (err) {
       console.error(err);
       errorMessage = err.message;
     }
     return { client: this, paths, errorMessage }
+  }
+
+  async downloadFile(fileName, localFile) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const stream = await this.get(fileName);
+        const writeStream = fs.createWriteStream(localFile);
+        stream.on('error', (error) => {
+          reject(error);
+        });
+        writeStream.on('error', (error) => {
+          reject(error);
+        });
+        writeStream.on('finish', () => {
+          resolve();
+        });
+        stream.pipe(writeStream);
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   async uploadFiles(localFiles, remoteFolder) {
