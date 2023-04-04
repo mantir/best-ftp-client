@@ -7,12 +7,13 @@ import { Readable } from "stream";
 
 export default class BestFTPClient {
 
-  constructor(config) {
-    this.config = config;
-    this.setFtpClient(config);
+  static async connect(config) {
+    var ftpClient = new BestFTPClient();
+    await ftpClient.init(config);
+    return ftpClient;
   }
 
-  async setFtpClient({ client, host, user, password, port, protocol = 'ftp' }) {
+  async init({ client, host, user, password, port, protocol = 'ftp' }) {
     console.log('get client for ' + protocol);
     const ftpOptions = {
       host, user, password: password,
@@ -30,40 +31,92 @@ export default class BestFTPClient {
         console.error('FTP-Connection error:', err);
       });
       ftpOptions.port = port || 21
-      await client.connect(ftpOptions);
 
-      this.list = (path) => new Promise((resolve, reject) => {
+      this.listFun = (path) => new Promise((resolve, reject) => {
         client.list(path, (err, list) => { if (err) return reject(err); resolve(list); });
       });
 
-      this.get = (path) => new Promise((resolve, reject) => {
+      this.getFun = (path) => new Promise((resolve, reject) => {
         client.get(path, (err, stream) => { if (err) return reject(err); resolve(stream); });
       });
 
-      this.put = (localPath, remotePath) => new Promise((resolve, reject) => {
+      this.putFun = (localPath, remotePath) => new Promise((resolve, reject) => {
         client.put(localPath, remotePath, (err) => { if (err) return reject(err); resolve(true); });
       });
+      this.mkdirFun = (path) => new Promise((resolve, reject) => {
+        client.mkdir(path, true, (err) => {
+          if (err) return reject(err);
+          resolve();
+        });
+      });
+      this.existsFun = (path) => new Promise((resolve, reject) => {
+        client.list(path, (err, list) => {
+          if (err) {
+            if (err.code === 550) {
+              resolve(false);
+            } else {
+              reject(err);
+            }
+          } else {
+            resolve(true);
+          }
+        });
+      });
+      await client.connect(ftpOptions);
     } else if (protocol === 'sftp') {
       var client = new SFTPClient();
       ftpOptions.port = port || 22
       client.on('error', (err) => {
         console.error('SFTP-Connection error:', err);
       });
+      this.listFun = (path) => { return client.list(path) };
+      this.getFun = async (path) => Readable.from(await client.get(path));
+      this.putFun = (localPath, remotePath) => client.put(localPath, remotePath);
+      this.mkdirFun = (path) => client.mkdir(path, true);
+      this.existsFun = async (path) => {
+        try {
+          await client.stat(path).catch((err) => { throw err })
+          return true;
+        } catch (err) {
+          if (err.code === "ENOENT") {
+            return false;
+          } else {
+            throw err;
+          }
+        }
+      };
       await client.connect(ftpOptions);
-      this.list = async (path) => client.list(path);
-      this.get = async (path) => Readable.from(await client.get(path));
-      this.put = async (localPath, remotePath) => await client.put(localPath, remotePath);
     } else {
       throw new Error('Unsupported protocol');
     }
   }
 
+  async list(path) {
+    return await this.listFun(path)
+  }
+
+  async get(path) {
+    return await this.getFun(path);
+  }
+
+  async put(localPath, remotePath) {
+    return await this.putFun(localPath, remotePath);
+  }
+
+  async mkdir(path) {
+    return await this.mkdirFun(path);
+  }
+
+  async exists(path) {
+    return await this.existsFun(path);
+  }
+
   async downloadFiles(sourceFolderOrFiles, targetFolder) {
-    var paths = [];
+    var paths = [], errorMessage;
     try {
       var files;
       if (Array.isArray(sourceFolderOrFiles)) {
-        var files = sourceFolderOrFiles.map(name => ({ name }));
+        var files = sourceFolderOrFiles.map(name => name.name ? name : ({ name }));
       } else {
         var files = await this.ls(sourceFolderOrFiles);
       }
@@ -77,37 +130,38 @@ export default class BestFTPClient {
           console.log(`${localFile} already exists, overwrite ...`);
         }
 
-        var stream = await client.getFun(`${file.name}`)
-        console.log(`Downloaded ${file.name} to ${localFile}`);
+        var stream = await this.get(`${file.name}`)
         stream.pipe(fs.createWriteStream(localFile));
+        console.log(`Downloaded ${file.name} to ${localFile}`);
         paths.push(localFile);
       }
     } catch (err) {
       console.error(err);
+      errorMessage = err.message;
     }
-    return { client: this, paths }
+    return { client: this, paths, errorMessage }
   }
 
   async uploadFiles(localFiles, remoteFolder) {
     var paths = [], errorMessage;
+    var targetDirs = {};
     try {
-      if (!client) {
-        client = await this.getFtpClient(loginData)
-      }
       for (const localFile of localFiles) {
         const remoteFile = `${remoteFolder}/${pathLib.basename(localFile)}`;
-        console.log(`Upload ${localFile} to ${remoteFile}`);
-        try {
-          await this.put(localFile, remoteFile);
-        } catch (e) {
-          errorMessage = e.message;
-          break;
+        const remoteDir = pathLib.dirname(remoteFile);
+        if (!targetDirs[remoteDir]) {
+          if (!(await this.exists(remoteDir))) {
+            await this.mkdir(remoteDir);
+          }
+          targetDirs[remoteDir] = true;
         }
+        console.log(`Upload ${localFile} to ${remoteFile}`);
+        await this.put(localFile, remoteFile);
         paths.push(remoteFile);
       }
-      client.end();
     } catch (err) {
       console.error(err);
+      errorMessage = err.message;
     }
     return { client: this, paths, errorMessage }
   }
@@ -129,7 +183,7 @@ export default class BestFTPClient {
     } catch (err) {
       console.log(err);
     }
-    return { client: this, files: allFiles };
+    return allFiles;
   }
 
 }
