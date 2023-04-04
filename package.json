@@ -1,0 +1,16 @@
+{
+  "name": "best-ftp-client",
+  "version": "1.0.0",
+  "description": "SFTP, FTP, FTPS, let's be honest: we don't care. We just want to send files around. You think so too? Then this client is for you. It's mainly a wrapper around the npm packages 'ssh2-sftp-client' and 'ftp'",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "sftp",
+    "ftp",
+    "ftps"
+  ],
+  "author": "Martin Kapp",
+  "license": "ISC"
+}
