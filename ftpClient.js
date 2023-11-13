@@ -62,6 +62,12 @@ export default class BestFTPClient {
           }
         });
       });
+      this.deleteFun = (path) => new Promise((resolve, reject) => {
+        client.delete(path, (err) => {
+          if (err) return reject(err);
+          resolve();
+        });
+      });
       this.end = () => client.end();
       await client.connect(ftpOptions);
     } else if (protocol === 'sftp') {
@@ -74,6 +80,7 @@ export default class BestFTPClient {
       this.getFun = async (path) => Readable.from(await client.get(path));
       this.putFun = (localPath, remotePath) => client.put(localPath, remotePath);
       this.mkdirFun = (path) => client.mkdir(path, true);
+      this.deleteFun = (path) => client.delete(path);
       this.existsFun = async (path) => {
         try {
           await client.stat(path).catch((err) => { throw err })
@@ -103,6 +110,10 @@ export default class BestFTPClient {
 
   async put(localPath, remotePath) {
     return await this.putFun(localPath, remotePath);
+  }
+
+  async delete(path) {
+    return await this.deleteFun(path);
   }
 
   async mkdir(path) {
